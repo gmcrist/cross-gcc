@@ -24,6 +24,7 @@ function usage() {
     echo "    --clean-all            Removes all temporary files (including downloads) in the build directory before building"
     echo "    --binutils <version>   Specifies the version of binutils to build"
     echo "    --gcc <version>        Specifies the version of gcc to build"
+    echo "    --gdb <version>        Specifies the version of gdb to build"
     echo "    --build-dir <path>     Specifies the path to the temporary build location"
     echo "    --prefix <path>        Specifies the path where cross gcc will be installed"
     echo "    --target <target>      Specifies the target architecture and os"
@@ -35,6 +36,7 @@ function main() {
 
     config_binutils_ver="2.37"
     config_gcc_ver="9.4.0"
+    config_gdb_ver="9.2"
 
     config_build_dir="$(dirname $(realpath $0))/build"
     config_prefix="${config_build_dir}/toolchain"
@@ -106,6 +108,7 @@ function main() {
     echo "  prefix:     ${PREFIX}"
     echo "  target:     ${TARGET}"
     echo "  gcc:        ${config_gcc_ver}"
+    echo "  gdb:        ${config_gdb_ver}"
     echo "  binutils:   ${config_binutils_ver}"
     echo ""
 
@@ -113,20 +116,23 @@ function main() {
     _log_config[labels.info]="[INFO] "
     _log_config[labels.error]="${colors[red]}[ERROR]${colors[none]} "
 
-    gcc_ver=${config_gcc_ver}
     binutils_ver=${config_binutils_ver}
-
     binutils_archive="binutils-${binutils_ver}.tar.xz"
-    gcc_archive="gcc-${gcc_ver}.tar.xz"
-
     binutils_url="https://ftp.gnu.org/gnu/binutils/${binutils_archive}"
-    gcc_url="ftp://ftp.gnu.org/gnu/gcc/gcc-${gcc_ver}/${gcc_archive}"
-
     binutils_src="binutils-${binutils_ver}"
-    gcc_src="gcc-${gcc_ver}"
-
     binutils_build="build-binutils"
+
+    gcc_ver=${config_gcc_ver}
+    gcc_archive="gcc-${gcc_ver}.tar.xz"
+    gcc_url="ftp://ftp.gnu.org/gnu/gcc/gcc-${gcc_ver}/${gcc_archive}"
+    gcc_src="gcc-${gcc_ver}"
     gcc_build="build-gcc"
+
+    gdb_ver=${config_gdb_ver}
+    gdb_archive="gdb-${gdb_ver}.tar.xz"
+    gdb_url="https://ftp.gnu.org/gnu/gdb/${gdb_archive}"
+    gdb_src="gdb-${gdb_ver}"
+    gdb_build="build-gdb"
 
     if [ ! -d ${PREFIX} ]; then
         mkdir -p ${PREFIX}
@@ -145,10 +151,14 @@ function main() {
         rm -rf "${gcc_src}"
         rm -rf "${gcc_build}"
 
+        rm -rf "${gdb_src}"
+        rm -rf "${gdb_build}"
+
         # Also remove downloaded files
         if [ ${config_clean} -gt 1 ]; then
             rm -rf "${binutils_archive}"
             rm -rf "${gcc_archive}"
+            rm -rf "${gdb_archive}"
         fi
     fi
 
@@ -159,6 +169,11 @@ function main() {
         log_passfail $? $msg || { echo ${output} >> ${build_log}; return 1; }
     fi
 
+    if [ ! -f ${binutils_archive} ]; then
+        log_error "Can't find binutils archive"
+        return 1
+    fi
+
     if [ ! -f ${gcc_archive} ]; then
         msg="Download gcc (${gcc_archive})"
         log_info ${msg}
@@ -166,38 +181,53 @@ function main() {
         log_passfail $? ${msg} || { echo ${output} >> ${build_log}; return 1; }
     fi
 
-    if [ ! -f ${binutils_archive} ]; then
-        log_error "Can't find binutils archive"
-        return 1
-    fi
-
     if [ ! -f ${gcc_archive} ]; then
         log_error "Can't find gcc archive"
         return 1
     fi
 
+    if [ ! -f ${gdb_archive} ]; then
+        msg="Download gdb (${gdb_archive})"
+        log_info ${msg}
+        output=$(download ${gdb_url} ${gdb_archive})
+        log_passfail $? ${msg} || { echo ${output} >> ${build_log}; return 1; }
+    fi
+
+    if [ ! -f ${gdb_archive} ]; then
+        log_error "Can't find gdb archive"
+        return 1
+    fi
+
+
+    log_info "Decompressing binutils archive"
     if [ -d "${binutils_build}" ]; then
         rm -rf ${binutils_build}
     fi
-
-    log_info "Decompressing binutils archive"
     xz -d -T $(nproc) -c ${binutils_archive} | tar -x >>${build_log} 2>&1
     log_passfail $? "decompress binutils archive" || { return 1; }
 
 
+    log_info "Decompressing gcc archive"
     if [ -d "${gcc_build}" ]; then
         rm -rf gcc-${gcc_build}
     fi
-
-    log_info "Decompressing gcc archive"
     xz -d -T $(nproc) -c ${gcc_archive} | tar -x >>${build_log} 2>&1
     log_passfail $? "decompress gcc archive" || { return 1; }
 
+
+    log_info "Decompressing gdb archive"
+    if [ -d "${gdb_build}" ]; then
+        rm -rf gdb-${gdb_build}
+    fi
+    xz -d -T $(nproc) -c ${gdb_archive} | tar -x >>${build_log} 2>&1
+    log_passfail $? "decompress gdb archive" || { return 1; }
+
+
+
+    log_info "Configuring binutils for ${TARGET}..."
     cd ${build_src}
     mkdir ${binutils_build}
     cd ${binutils_build}
-
-    log_info "Configuring binutils for ${TARGET}..."
     ../${binutils_src}/configure --target=$TARGET --prefix="$PREFIX" --with-sysroot --disable-nls --disable-werror >>${build_log} 2>&1
     log_passfail $? "configure binutils" || { return 1; }
 
@@ -209,11 +239,11 @@ function main() {
     make install >>${build_log} 2>&1
     log_passfail $? "install binutils" || { return 1; }
 
+
+    log_info "Configuring gcc for ${TARGET}..."
     cd ${build_src}
     mkdir ${gcc_build}
     cd ${gcc_build}
-
-    log_info "Configuring gcc for ${TARGET}..."
     ../${gcc_src}/configure --target=$TARGET --prefix="$PREFIX" --disable-nls --enable-languages=c,c++ --without-headers >>${build_log} 2>&1
     log_passfail $? "configure gcc" || { return 1; }
 
@@ -232,6 +262,21 @@ function main() {
     log_info "Installing libgcc..."
     make install-target-libgcc >>${build_log} 2>&1
     log_passfail $? "install libgcc" || { return 1; }
+
+    log_info "Configuring gdb for ${TARGET}..."
+    cd ${build_src}
+    mkdir ${gdb_build}
+    cd ${gdb_build}
+    ../${gdb_src}/configure --target=${TARGET} --prefix="${PREFIX}" --with-python >>${build_log} 2>&1
+    log_passfail $? "configure gdb" || { return 1; }
+
+    log_info "Building gdb..."
+    make -j $(nproc) >>${build_log} 2>&1
+    log_passfail $? "build gdb" || { return 1; }
+
+    log_info "Installing gdb"
+    make install >>${build_log} 2>&1
+    log_passfail $? "install gdb" || { return 1; }
 }
 
 main $@
