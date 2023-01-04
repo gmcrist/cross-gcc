@@ -19,24 +19,44 @@ function usage() {
     self=$(basename $0)
     echo "Usage: ${self} [options]"
     echo ""
-    echo "Options:"
+    echo "Basic Options:"
+    echo "    --build-dir <path>     Specifies the path to the temporary build location"
     echo "    --clean                Removes temporary files in the build directory before building"
     echo "    --clean-all            Removes all temporary files (including downloads) in the build directory before building"
-    echo "    --binutils <version>   Specifies the version of binutils to build"
+    echo ""
+    echo "Target/Install Configuration:"
+    echo "    --target <target>      Specifies the target architecture and os"
+    echo "    --prefix <path>        Specifies the path where cross gcc will be installed"
+    echo ""
+    echo "Version Configuration:"
     echo "    --gcc <version>        Specifies the version of gcc to build"
     echo "    --gdb <version>        Specifies the version of gdb to build"
-    echo "    --build-dir <path>     Specifies the path to the temporary build location"
-    echo "    --prefix <path>        Specifies the path where cross gcc will be installed"
-    echo "    --target <target>      Specifies the target architecture and os"
+    echo "    --binutils <version>   Specifies the version of binutils to build"
     echo ""
 }
 
-function main() {
-    temp=$(getopt --long help,clean,build-dir:,target:prefix:,binutils:,gcc: -n cross-gcc-build -- "$@")
+function prereq_check() {
+    err=0
 
+    for cmd in gcc make python3; do
+        which ${cmd} || { log_error "${cmd} not found";  err=1; }
+    done
+
+    if [ ${err} -ne 0 ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+function main() {
+    if [ $# -gt 1 ]; then
+        temp=$(getopt --long help,build-dir:,clean,clean-all,target:prefix:,gcc:,gdb:,binutils:, -n cross-gcc-build -- "$@")
+    fi
+
+    config_gcc_ver="12.1.0"
+    config_gdb_ver="12.1"
     config_binutils_ver="2.37"
-    config_gcc_ver="9.4.0"
-    config_gdb_ver="9.2"
 
     config_build_dir="$(dirname $(realpath $0))/build"
     config_prefix="${config_build_dir}/toolchain"
@@ -76,13 +96,18 @@ function main() {
                 shift 2
                 ;;
 
-            --binutils)
-                config_binutils_ver="$2"
+            --gcc)
+                config_gcc_ver="$2"
                 shift 2
                 ;;
 
-            --gcc)
-                config_gcc_ver="$2"
+            --gdb)
+                config_gdb_ver="$2"
+                shift 2
+                ;;
+
+            --binutils)
+                config_binutils_ver="$2"
                 shift 2
                 ;;
 
@@ -97,8 +122,16 @@ function main() {
         esac
     done
 
+    prereq_check || { log_error "missing pre-requisites"; return 1; }
+
+
+    # Ensure these are cleared
+    unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH INCLUDE LD_LIBRARY_PATH LIBRARY_PATH PKG_CONFIG_PATH
+
     build_src="${config_build_dir}/src"
     build_log="${config_build_dir}/build.log"
+
+    python_path=$(which $python3)
 
     export PREFIX="${config_prefix}"
     export TARGET="${config_target}"
@@ -116,15 +149,9 @@ function main() {
     _log_config[labels.info]="[INFO] "
     _log_config[labels.error]="${colors[red]}[ERROR]${colors[none]} "
 
-    binutils_ver=${config_binutils_ver}
-    binutils_archive="binutils-${binutils_ver}.tar.xz"
-    binutils_url="https://ftp.gnu.org/gnu/binutils/${binutils_archive}"
-    binutils_src="binutils-${binutils_ver}"
-    binutils_build="build-binutils"
-
     gcc_ver=${config_gcc_ver}
     gcc_archive="gcc-${gcc_ver}.tar.xz"
-    gcc_url="ftp://ftp.gnu.org/gnu/gcc/gcc-${gcc_ver}/${gcc_archive}"
+    gcc_url="https://ftp.gnu.org/gnu/gcc/gcc-${gcc_ver}/${gcc_archive}"
     gcc_src="gcc-${gcc_ver}"
     gcc_build="build-gcc"
 
@@ -133,6 +160,12 @@ function main() {
     gdb_url="https://ftp.gnu.org/gnu/gdb/${gdb_archive}"
     gdb_src="gdb-${gdb_ver}"
     gdb_build="build-gdb"
+
+    binutils_ver=${config_binutils_ver}
+    binutils_archive="binutils-${binutils_ver}.tar.xz"
+    binutils_url="https://ftp.gnu.org/gnu/binutils/${binutils_archive}"
+    binutils_src="binutils-${binutils_ver}"
+    binutils_build="build-binutils"
 
     if [ ! -d ${PREFIX} ]; then
         mkdir -p ${PREFIX}
@@ -159,6 +192,8 @@ function main() {
             rm -rf "${binutils_archive}"
             rm -rf "${gcc_archive}"
             rm -rf "${gdb_archive}"
+
+            rm -rf ${build_dir}
         fi
     fi
 
@@ -239,12 +274,23 @@ function main() {
     make install >>${build_log} 2>&1
     log_passfail $? "install binutils" || { return 1; }
 
+    log_info "Obtaining gcc pre-requisites..."
+    cd ${build_src}/${gcc_src}
+    ./contrib/download_prerequisites >>${build_log} 2>&1
+    log_passfail $? "obtaining gcc pre-requisites" || { return 1; }
 
     log_info "Configuring gcc for ${TARGET}..."
     cd ${build_src}
     mkdir ${gcc_build}
     cd ${gcc_build}
-    ../${gcc_src}/configure --target=$TARGET --prefix="$PREFIX" --disable-nls --enable-languages=c,c++ --without-headers >>${build_log} 2>&1
+
+    ../${gcc_src}/configure --target=$TARGET \
+                            --prefix="$PREFIX" \
+                            --disable-nls \
+                            --enable-languages=c,c++ \
+                            --without-headers \
+                            >>${build_log} 2>&1
+
     log_passfail $? "configure gcc" || { return 1; }
 
     log_info "Building gcc..."
@@ -267,7 +313,12 @@ function main() {
     cd ${build_src}
     mkdir ${gdb_build}
     cd ${gdb_build}
-    ../${gdb_src}/configure --target=${TARGET} --prefix="${PREFIX}" --with-python >>${build_log} 2>&1
+
+    ../${gdb_src}/configure --target=${TARGET} \
+                            --prefix="${PREFIX}" \
+                            --with-python=${python_path} \
+                            >>${build_log} 2>&1
+
     log_passfail $? "configure gdb" || { return 1; }
 
     log_info "Building gdb..."
