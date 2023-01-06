@@ -131,7 +131,7 @@ function main() {
     build_src="${config_build_dir}/src"
     build_log="${config_build_dir}/build.log"
 
-    python_path=$(which $python3)
+    python_path=$(which python3)
 
     export PREFIX="${config_prefix}"
     export TARGET="${config_target}"
