@@ -1,5 +1,5 @@
-#!/bin/bash
-# Copyright 2021-2022 Greg Crist <gmcrist@gmail.com>
+#!/usr/bin/env bash
+# Copyright 2021-2023 Greg Crist <gmcrist@gmail.com>
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,11 +42,29 @@ function prereq_check() {
         which ${cmd} || { log_error "${cmd} not found";  err=1; }
     done
 
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        for cmd in brew; do
+            which ${cmd} || { log_error "${cmd} not found";  err=1; }
+        done
+    fi
+
     if [ ${err} -ne 0 ]; then
         return 1
     fi
 
     return 0
+}
+
+function cpu_count() {
+    cpus=1
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        cpus=$(sysctl -n hw.logicalcpu)
+    else
+        cpus=$(nproc)
+    fi
+
+    echo ${cpus}
 }
 
 function main() {
@@ -238,7 +256,7 @@ function main() {
     if [ -d "${binutils_build}" ]; then
         rm -rf ${binutils_build}
     fi
-    xz -d -T $(nproc) -c ${binutils_archive} | tar -x >>${build_log} 2>&1
+    xz -d -T $(cpu_count) -c ${binutils_archive} | tar -x >>${build_log} 2>&1
     log_passfail $? "decompress binutils archive" || { return 1; }
 
 
@@ -246,7 +264,7 @@ function main() {
     if [ -d "${gcc_build}" ]; then
         rm -rf gcc-${gcc_build}
     fi
-    xz -d -T $(nproc) -c ${gcc_archive} | tar -x >>${build_log} 2>&1
+    xz -d -T $(cpu_count) -c ${gcc_archive} | tar -x >>${build_log} 2>&1
     log_passfail $? "decompress gcc archive" || { return 1; }
 
 
@@ -254,7 +272,7 @@ function main() {
     if [ -d "${gdb_build}" ]; then
         rm -rf gdb-${gdb_build}
     fi
-    xz -d -T $(nproc) -c ${gdb_archive} | tar -x >>${build_log} 2>&1
+    xz -d -T $(cpu_count) -c ${gdb_archive} | tar -x >>${build_log} 2>&1
     log_passfail $? "decompress gdb archive" || { return 1; }
 
 
@@ -267,7 +285,7 @@ function main() {
     log_passfail $? "configure binutils" || { return 1; }
 
     log_info "Building binutils..."
-    make -j $(nproc) >>${build_log} 2>&1
+    make -j $(cpu_count) >>${build_log} 2>&1
     log_passfail $? "build binutils" || { return 1; }
 
     log_info "Installing binutils"
@@ -294,11 +312,11 @@ function main() {
     log_passfail $? "configure gcc" || { return 1; }
 
     log_info "Building gcc..."
-    make -j $(nproc) all-gcc >>${build_log} 2>&1
+    make -j $(cpu_count) all-gcc >>${build_log} 2>&1
     log_passfail $? "build gcc" || { return 1; }
 
     log_info "Building libgcc..."
-    make -j $(nproc) all-target-libgcc >>${build_log} 2>&1
+    make -j $(cpu_count) all-target-libgcc >>${build_log} 2>&1
     log_passfail $? "build libgcc" || { return 1; }
 
     log_info "Installing gcc..."
@@ -314,15 +332,28 @@ function main() {
     mkdir ${gdb_build}
     cd ${gdb_build}
 
-    ../${gdb_src}/configure --target=${TARGET} \
-                            --prefix="${PREFIX}" \
-                            --with-python=${python_path} \
-                            >>${build_log} 2>&1
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        ../${gdb_src}/configure --target=${TARGET} \
+                                --prefix="${PREFIX}" \
+                                --disable-werror \
+                                --with-python=${python_path} \
+                                --with-libgmp-prefix="`brew --prefix gmp`" \
+                                --with-gmp="`brew --prefix gmp`" \
+                                --with-isl="`brew --prefix isl`" \
+                                --with-mpc="`brew --prefix libmpc`" \
+                                --with-mpfr="`brew --prefix mpfr`" \
+                                >>${build_log} 2>&1
+    else
+        ../${gdb_src}/configure --target=${TARGET} \
+                                --prefix="${PREFIX}" \
+                                --with-python=${python_path} \
+                                >>${build_log} 2>&1
+    fi
 
     log_passfail $? "configure gdb" || { return 1; }
 
     log_info "Building gdb..."
-    make -j $(nproc) >>${build_log} 2>&1
+    make -j $(cpu_count) >>${build_log} 2>&1
     log_passfail $? "build gdb" || { return 1; }
 
     log_info "Installing gdb"
