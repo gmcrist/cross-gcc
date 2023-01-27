@@ -38,12 +38,16 @@ function usage() {
 function prereq_check() {
     err=0
 
-    for cmd in gcc make python3; do
-        which ${cmd} || { log_error "${cmd} not found";  err=1; }
-    done
-
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        for cmd in brew; do
+        for cmd in brew gcc make; do
+            which ${cmd} || { log_error "${cmd} not found";  err=1; }
+        done
+
+        for pkg in python3 gmp isl libmpc mpfr; do
+            brew --prefix ${pkg} || { log_error "package ${pkg} not found"; err=1; }
+        done
+    else
+        for cmd in gcc make python3; do
             which ${cmd} || { log_error "${cmd} not found";  err=1; }
         done
     fi
@@ -149,7 +153,6 @@ function main() {
     build_src="${config_build_dir}/src"
     build_log="${config_build_dir}/build.log"
 
-    python_path=$(which python3)
 
     export PREFIX="${config_prefix}"
     export TARGET="${config_target}"
@@ -333,6 +336,8 @@ function main() {
     cd ${gdb_build}
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
+        python_path="`brew --prefix python3`/bin/python3"
+
         ../${gdb_src}/configure --target=${TARGET} \
                                 --prefix="${PREFIX}" \
                                 --disable-werror \
@@ -344,6 +349,8 @@ function main() {
                                 --with-mpfr="`brew --prefix mpfr`" \
                                 >>${build_log} 2>&1
     else
+        python_path=$(which python3)
+
         ../${gdb_src}/configure --target=${TARGET} \
                                 --prefix="${PREFIX}" \
                                 --with-python=${python_path} \
